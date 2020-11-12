@@ -116,7 +116,7 @@ async function createNode(ipfsOptions) {
     ipfsHttpModule: ipfsClient,
     ipfsBin: binPath().replace("app.asar", "app.asar.unpacked"),
     remote: false,
-    disposable: false,
+    disposable: true,
     test: false,
     args: ["--enable-pubsub-experiment"],
     ipfsOptions
