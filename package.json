@@ -2,7 +2,10 @@
   "name": "ipfs-pubsub-test",
   "version": "1.0.0",
   "description": "IPFS Pubsub test",
-  "main": "index.js",
+  "main": "src/ipfs-pubsub-test.js",
+  "scripts":{
+    "start": "node src/ipfs-pubsub-test.js"
+  },
   "license": "MIT",
   "dependencies": {
     "debug": "^4.2.0",

@@ -42,6 +42,9 @@ async function runOneTest(number, total) {
     console.log(result);
   } catch (e) {
     console.error(e);
+    await daemon1.stop();
+    await daemon2.stop();
+
     process.exit(1);
   }
   console.log(`[${number}/${total}] Stop Daemons`)
@@ -53,21 +56,21 @@ async function testPubSub(ipfs1, ipfs2, number, total) {
   const channel = uuidv4();
   let dataReceived;
   try {
-    await ipfs2.pubsub.subscribe(channel, msg => {
+    await ipfs1.pubsub.subscribe(channel, msg => {
       dataReceived = JSON.parse(new TextDecoder().decode(msg.data));
-    }, {timeout: 2000});
+    });
 
     console.log("Waiting for pubsub peers...");
-    await waitForPubsubPeers(ipfs1, channel);
+    await waitForPubsubPeers(ipfs2, channel, 5000);
     const peers1 = await ipfs1.pubsub.peers(channel);
     const peers2 = await ipfs2.pubsub.peers(channel);
     console.log("Pubsub peers daemon1:", peers1);
     console.log("Pubsub peers daemon2:", peers2);
-    if (peers1.length === 0) {
+    if (peers2.length === 0) {
       console.log("Pubsub peers not set correctly. Failure imminent.")
     }
 
-    await ipfs1.pubsub.publish(channel, JSON.stringify({type: "transport_test"}), {timeout: 2000});
+    await ipfs2.pubsub.publish(channel, JSON.stringify({type: "pubsub_test"}));
 
   } catch (e) {
     console.log("Error while exchanging messages:", e);
@@ -76,8 +79,8 @@ async function testPubSub(ipfs1, ipfs2, number, total) {
   return new Promise(async (resolve, reject) => {
     await waitFor(
       () => dataReceived,
-      () => resolve(`--- [${number}/${total}] Transport test success: ${JSON.stringify(dataReceived)}`),
-      (waitedMillis) => reject(`--- [${number}/${total}] Transport test failed after ${waitedMillis}ms`),
+      () => resolve(`--- [${number}/${total}] Pubsub test success: ${JSON.stringify(dataReceived)}`),
+      (waitedMillis) => reject(`--- [${number}/${total}] Pubsub test failed after ${waitedMillis}ms`),
       5000
     );
   });
@@ -104,7 +107,7 @@ function waitForPubsubPeers(ipfs, channel, timeout = 2000) {
 async function waitFor(pred, onSuccess, onTimeout, timeoutMillis, waitedMillis = 0) {
   if (await pred()) return onSuccess();
   if (waitedMillis >= timeoutMillis) return onTimeout(waitedMillis);
-  setTimeout(() => waitFor(pred, onSuccess, onTimeout, timeoutMillis, waitedMillis + 50), 50);
+  setTimeout(() => waitFor(pred, onSuccess, onTimeout, timeoutMillis, waitedMillis + 100), 100);
 }
 
 
