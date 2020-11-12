@@ -1,22 +1,37 @@
-const ipfsClient = require("ipfs-http-client");
 const fs = require("fs-extra");
-const IPFSDaemon = require("./ipfs-daemon");
+const Ctl = require("ipfsd-ctl");
+const binPath = require("go-ipfs").path;
+const ipfsClient = require("ipfs-http-client");
+
 const path = require("path");
 const os = require("os");
+const debug = require("debug");
 const uuidv4 = require("uuid").v4;
 
 const RepoDir1 = path.join(os.tmpdir(), ".ipfs-pubsub-test-1");
 const RepoDir2 = path.join(os.tmpdir(), ".ipfs-pubsub-test-2");
 
+(async () => await runTests(100))();
+
+async function runTests(n) {
+  // debug.enable('ipfsd-ctl:daemon:stdout,ipfsd-ctl:daemon:stderr,ipfs-http-client:pubsub:subscribe');
+  for (let i = 0; i < n; ++i) {
+    await runOneTest(i + 1, n);
+  }
+}
+
 async function runOneTest(number, total) {
   fs.rmdirSync(RepoDir1, {recursive: true});
   fs.rmdirSync(RepoDir2, {recursive: true});
-  const daemon1 = await IPFSDaemon.create({ipfsConfig: testConfig1()});
-  const daemon2 = await IPFSDaemon.create({ipfsConfig: testConfig2()});
+  const daemon1 = await createNode(testConfig1());
+  const daemon2 = await createNode(testConfig2());
 
   console.log(`[${number}/${total}] Start Daemons`)
   await daemon1.start();
   await daemon2.start();
+
+  await sleep(500);
+
   const ipfs1 = await ipfsClient({host: 'localhost', port: 5007, protocol: 'http'});
   const ipfs2 = await ipfsClient({host: 'localhost', port: 5008, protocol: 'http'});
 
@@ -32,8 +47,6 @@ async function runOneTest(number, total) {
   console.log(`[${number}/${total}] Stop Daemons`)
   await daemon1.stop();
   await daemon2.stop();
-
-
 }
 
 async function testPubSub(ipfs1, ipfs2, number, total) {
@@ -44,21 +57,24 @@ async function testPubSub(ipfs1, ipfs2, number, total) {
       dataReceived = JSON.parse(new TextDecoder().decode(msg.data));
     }, {timeout: 2000});
 
-    await waitForPeers(ipfs1, channel, 10000);
+    console.log("Waiting for pubsub peers...");
+    await waitForPubsubPeers(ipfs1, channel);
     const peers1 = await ipfs1.pubsub.peers(channel);
     const peers2 = await ipfs2.pubsub.peers(channel);
     console.log("Pubsub peers daemon1:", peers1);
     console.log("Pubsub peers daemon2:", peers2);
-
+    if (peers1.length === 0) {
+      console.log("Pubsub peers not set correctly. Failure imminent.")
+    }
 
     await ipfs1.pubsub.publish(channel, JSON.stringify({type: "transport_test"}), {timeout: 2000});
 
   } catch (e) {
-    console.log("Error when exchanging messages:", e);
+    console.log("Error while exchanging messages:", e);
   }
 
-  return new Promise((resolve, reject) => {
-    waitFor(
+  return new Promise(async (resolve, reject) => {
+    await waitFor(
       () => dataReceived,
       () => resolve(`--- [${number}/${total}] Transport test success: ${JSON.stringify(dataReceived)}`),
       (waitedMillis) => reject(`--- [${number}/${total}] Transport test failed after ${waitedMillis}ms`),
@@ -67,32 +83,44 @@ async function testPubSub(ipfs1, ipfs2, number, total) {
   });
 }
 
-function waitForPeers(ipfs, channel, timeout = 2000) {
-  return new Promise(async (resolve, reject) => {
-    await wait(0);
-
-    async function wait(waitedMillis) {
-      if (waitedMillis >= timeout) return resolve();
-      const peers = await ipfs.pubsub.peers(channel);
-      if (peers.length > 0) return resolve();
-      setTimeout(() => wait(waitedMillis + 100), 100);
-    }
+function sleep(ms) {
+  return new Promise(resolve => {
+    setTimeout(resolve, ms);
   });
 }
 
-function waitFor(pred, resolve, reject, timeoutMillis, waitedMillis = 0) {
-  if (pred()) return resolve();
-  if (waitedMillis >= timeoutMillis) return reject(waitedMillis);
-  setTimeout(() => waitFor(pred, resolve, reject, timeoutMillis, waitedMillis + 10), 10);
+function waitForPubsubPeers(ipfs, channel, timeout = 2000) {
+  return new Promise(async resolve => {
+    await waitFor(
+      async () => {
+        const peers = await ipfs.pubsub.peers(channel);
+        return peers.length > 0;
+      },
+      resolve, resolve, timeout
+    );
+  });
 }
 
-async function runTests(n) {
-  for (let i = 0; i < n; ++i) {
-    await runOneTest(i + 1, n);
-  }
+async function waitFor(pred, onSuccess, onTimeout, timeoutMillis, waitedMillis = 0) {
+  if (await pred()) return onSuccess();
+  if (waitedMillis >= timeoutMillis) return onTimeout(waitedMillis);
+  setTimeout(() => waitFor(pred, onSuccess, onTimeout, timeoutMillis, waitedMillis + 50), 50);
 }
 
-(async () => await runTests(100))();
+
+async function createNode(ipfsOptions) {
+  const node = await Ctl.createController({
+    ipfsHttpModule: ipfsClient,
+    ipfsBin: binPath().replace("app.asar", "app.asar.unpacked"),
+    remote: false,
+    disposable: false,
+    test: false,
+    args: ["--enable-pubsub-experiment"],
+    ipfsOptions
+  });
+
+  return node.init();
+}
 
 
 function testConfig1() {
